@@ -143,3 +143,5 @@ do
     esac
     shift
 done
+
+# WIP: Adding an option to delete all branches which have not been worked upon in the last 'n' days
