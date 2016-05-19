@@ -1,0 +1,145 @@
+#!/bin/bash
+set -e
+
+function setup {
+echo "INFO: Moving to the master branch ..."
+git checkout master
+}
+
+function usage {
+echo "USAGE:"
+echo "        [<branch-names> ...]"
+echo "           Deletes the named local branches. 'master' branch will never be deleted."
+echo
+echo "        -p"
+echo "           Deletes the remote-tracking branches (from your local repository) which are deleted from the remote repository."
+echo
+echo "EXAMPLE:"
+echo "        cleanRepo.sh development release master"
+echo "           Deletes 'development' and 'release' branches. But 'master' branch will never be deleted."
+echo
+echo "        cleanRepo.sh -p"
+echo "           Deletes all the remote-tracking branches (which do not exist in remote repository)"
+echo
+echo "        cleanRepo.sh development release -p"
+echo "           Deletes 'development' and 'release' branch and will also delete the remote-tracking branches (which do not exist in remote repository)."
+echo
+}
+
+function pruneRemoteBranches {
+echo "INFO: Processing -p option ... "
+PRUNED_BRANCHES=( $(git remote prune origin | grep -i "origin/" | cut -d"/" -f2) )
+LOCAL_BRANCHES=( $(git for-each-ref --shell --format='%(refname)' refs/heads/ | cut -d"/" -f3 | cut -d"'" -f1) )
+MERGED_INTO_MASTER_BRANCHES=( $(git branch --merged master | tr "*" "#" | tr " " "#" | cut -d"#" -f3) )
+
+if [ "${#PRUNED_BRANCHES[@]}" -gt 0 ]
+then
+	echo "INFO: Removing the remote-tracking branches which are deleted from the remote repository."
+else
+	echo "INFO: Did not find any remote-tracking branches to delete."
+fi
+ 
+for pruned_branch in "${PRUNED_BRANCHES[@]}"
+do
+	MERGED_BRANCH_FLAG=false
+	echo "INFO: branch 'remotes/origin/$pruned_branch' deleted."
+	sleep 1
+	for local_branch in "${LOCAL_BRANCHES[@]}"
+	do
+	if [ "$local_branch" == "$pruned_branch" ]
+	then
+		for merged_branch in "${MERGED_INTO_MASTER_BRANCHES[@]}"
+                do
+                        if [ "$merged_branch" == "$local_branch" ] && [ "$MERGED_BRANCH_FLAG" = false ]
+                        then
+                                MERGED_BRANCH_FLAG=true
+                        fi
+                done
+                if [ "$MERGED_BRANCH_FLAG" = true ]
+                then
+                        read -r -p "INFO: '$pruned_branch' branch exists locally (and is merged into the master). Do you want to delete it locally as well? [y/N]: " user_response
+                else
+                        read -r -p "INFO: '$pruned_branch' branch exists locally (and is not-yet merged into the master). Do you want to delete it locally as well? [y/N]: " user_response
+                fi
+
+		if [ "$user_response" == "y" ]
+		then
+			git branch -D $pruned_branch
+			echo "INFO: branch '$pruned_branch' deleted"
+		else
+			echo "INFO: branch '$pruned_branch' not deleted"
+		fi
+	fi
+	done
+done
+}
+
+
+function deleteBranches {
+# The LOCAL_BRANCHES needed to be evaluated again after deleting the local branches in the above part and to not try to delete
+# the local branch in case it is given in the argument list of the command again.
+LOCAL_BRANCHES=( $(git for-each-ref --shell --format='%(refname)' refs/heads/ | cut -d"/" -f3 | cut -d"'" -f1) )
+REMOTE_BRANCHES=( $(git for-each-ref --shell --format='%(refname)' refs/remotes/ | cut -d"/" -f4 | cut -d"'" -f1 ) )
+LOCAL_BRANCH_FOUND_FLAG=false
+
+for argument_branch in "$@"
+do
+	if [ $argument_branch != "master" ]
+	then
+		for local_branch in "${LOCAL_BRANCHES[@]}"
+		do
+			if [ "$argument_branch" == "$local_branch" ]
+			then
+				read -r -p "INFO: Delete '$argument_branch' branch locally? [y/N]: " user_response				
+				if [ $user_response == "y" ]
+				then
+					git branch -D $argument_branch 1> ~/cleanRepo.log
+					echo "INFO: branch '$argument_branch' deleted"
+					for remote_branch in "${REMOTE_BRANCHES[@]}"
+					do
+						if [ "$argument_branch" == "$remote_branch" ]
+						then
+							read -r -p "INFO: Delete '$argument_branch' branch from remote repository? [y/N]: " user_response_remote
+							if [ "$user_response_remote" == "y" ]
+							then
+								git push origin --delete $argument_branch
+								echo "INFO: branch 'remotes/origin/$argument_branch' deleted."
+							else
+								echo "INFO: branch 'remotes/origin/$argument_branch' not deleted."
+							fi		
+						fi
+					done
+				else
+					echo "INFO: Not deleting the '$argument_branch' branch."			
+				fi
+			LOCAL_BRANCH_FOUND_FLAG=true
+			fi
+		done	
+		if [ "$LOCAL_BRANCH_FOUND_FLAG" = false ]
+		then
+			echo "INFO: branch '$argument_branch' does not exist."	
+		fi
+	else
+		echo "INFO: branch '$argument_branch' can not be deleted."
+	fi
+done	
+}
+
+if [ ! "$#" -gt 0 ]
+then
+        usage
+else
+	setup
+fi
+
+for arg in "$@"
+do
+    case "$arg" in
+         -p) pruneRemoteBranches 
+            ;;
+         *) 
+	    deleteBranches $@
+            ;;
+    esac
+    shift
+done
